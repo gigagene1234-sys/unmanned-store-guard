@@ -1,11 +1,17 @@
 package com.storeguard.hub
 
-import android.content.ComponentName
+import android.Manifest
+import android.app.Activity
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -31,8 +37,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.storeguard.hub.service.DmssNotificationListener
-import com.storeguard.hub.service.StoreAccessibilityService
+import com.storeguard.hub.service.PosCaptureService
 import com.storeguard.hub.ui.DashboardViewModel
 import java.text.NumberFormat
 import java.time.Instant
@@ -41,21 +48,51 @@ import java.time.format.DateTimeFormatter
 
 class MainActivity : ComponentActivity() {
     private val vm by viewModels<DashboardViewModel>()
-    private var notificationGranted by mutableStateOf(false)
-    private var accessibilityGranted by mutableStateOf(false)
+    private var notificationListenerGranted by mutableStateOf(false)
+    private var posCaptureRunning by mutableStateOf(false)
+
+    private val screenCaptureLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val data = result.data
+            if (result.resultCode == Activity.RESULT_OK && data != null) {
+                val serviceIntent = Intent(this, PosCaptureService::class.java).apply {
+                    putExtra(PosCaptureService.EXTRA_RESULT_CODE, result.resultCode)
+                    putExtra(PosCaptureService.EXTRA_RESULT_DATA, data)
+                }
+                ContextCompat.startForegroundService(this, serviceIntent)
+                posCaptureRunning = true
+                launchPackage(PosCaptureService.ANSI_POS_PACKAGE)
+            }
+        }
+
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+
         setContent {
             MaterialTheme {
                 Dashboard(
                     vm = vm,
-                    notificationGranted = notificationGranted,
-                    accessibilityGranted = accessibilityGranted,
-                    openNotificationSettings = { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
-                    openAccessibilitySettings = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+                    notificationListenerGranted = notificationListenerGranted,
+                    posCaptureRunning = posCaptureRunning,
+                    openNotificationSettings = {
+                        startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                    },
+                    startPosCapture = { requestPosCapture() },
+                    stopPosCapture = {
+                        stopService(Intent(this, PosCaptureService::class.java))
+                        posCaptureRunning = false
+                    },
                     launchDmss = { launchPackage(DmssNotificationListener.DMSS_PACKAGE) },
-                    launchAnsi = { launchPackage(StoreAccessibilityService.ANSI_POS_PACKAGE) }
+                    launchAnsi = { launchPackage(PosCaptureService.ANSI_POS_PACKAGE) }
                 )
             }
         }
@@ -63,8 +100,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        notificationGranted = isNotificationListenerEnabled()
-        accessibilityGranted = isAccessibilityEnabled()
+        notificationListenerGranted = isNotificationListenerEnabled()
+        posCaptureRunning = PosCaptureService.running.get()
+    }
+
+    private fun requestPosCapture() {
+        val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        screenCaptureLauncher.launch(manager.createScreenCaptureIntent())
     }
 
     private fun launchPackage(packageName: String) {
@@ -76,21 +118,16 @@ class MainActivity : ComponentActivity() {
         val enabled = Settings.Secure.getString(contentResolver, "enabled_notification_listeners") ?: return false
         return enabled.contains(packageName)
     }
-
-    private fun isAccessibilityEnabled(): Boolean {
-        val enabled = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
-        val expected = ComponentName(this, StoreAccessibilityService::class.java).flattenToString()
-        return enabled.split(':').any { it.equals(expected, ignoreCase = true) }
-    }
 }
 
 @Composable
 private fun Dashboard(
     vm: DashboardViewModel,
-    notificationGranted: Boolean,
-    accessibilityGranted: Boolean,
+    notificationListenerGranted: Boolean,
+    posCaptureRunning: Boolean,
     openNotificationSettings: () -> Unit,
-    openAccessibilitySettings: () -> Unit,
+    startPosCapture: () -> Unit,
+    stopPosCapture: () -> Unit,
     launchDmss: () -> Unit,
     launchAnsi: () -> Unit
 ) {
@@ -105,23 +142,45 @@ private fun Dashboard(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Text("무인가게 관리 허브 v0.1", style = MaterialTheme.typography.headlineSmall)
-            Text("DMSS 알림과 안시포스 거래를 같은 시간축에 수집하는 기반 버전입니다.")
+            Text("무인가게 관리 허브 v0.2 Safe", style = MaterialTheme.typography.headlineSmall)
+            Text("민감한 접근성 권한 없이, Android가 매번 명시적으로 승인하는 화면 공유 세션에서만 POS 거래를 OCR 수집합니다.")
         }
-        item { StatusCard("DMSS 알림 접근", notificationGranted, openNotificationSettings) }
-        item { StatusCard("안시포스 화면 접근성", accessibilityGranted, openAccessibilitySettings) }
+
         item {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("앱 연결 테스트", style = MaterialTheme.typography.titleMedium)
+                    Text("DMSS 이벤트 수집", style = MaterialTheme.typography.titleMedium)
+                    Text(if (notificationListenerGranted) "알림 접근 허용됨" else "알림 접근 설정 필요")
+                    Text("StoreGuard 코드는 DMSS 패키지의 알림만 저장하도록 제한되어 있습니다.")
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = openNotificationSettings) {
+                            Text(if (notificationListenerGranted) "알림 접근 설정" else "알림 접근 허용")
+                        }
                         OutlinedButton(onClick = launchDmss) { Text("DMSS 열기") }
-                        OutlinedButton(onClick = launchAnsi) { Text("안시포스 열기") }
                     }
-                    Text("안시포스의 매출 목록 화면을 열면 접근성 서비스가 보이는 거래 행을 자동 수집합니다.")
                 }
             }
         }
+
+        item {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("안시포스 거래 수집", style = MaterialTheme.typography.titleMedium)
+                    Text(if (posCaptureRunning) "수집 세션 실행 중" else "수집 세션 중지됨")
+                    Text("시작을 누르면 Android 화면 공유 승인창이 표시됩니다. 승인 후 15분 동안 화면을 주기적으로 OCR하며, 원본 화면과 원문 OCR 결과는 저장하지 않습니다.")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (!posCaptureRunning) {
+                            Button(onClick = startPosCapture) { Text("POS 수집 시작") }
+                        } else {
+                            Button(onClick = stopPosCapture) { Text("POS 수집 중지") }
+                        }
+                        OutlinedButton(onClick = launchAnsi) { Text("안시포스 열기") }
+                    }
+                    Text("수집 중에는 시스템 알림이 계속 표시되며 알림의 '중지' 버튼으로 즉시 종료할 수 있습니다.")
+                }
+            }
+        }
+
         item {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -136,7 +195,8 @@ private fun Dashboard(
                         Button(onClick = { offsetText.toLongOrNull()?.let(vm::saveOffsetMillis) }) { Text("저장") }
                         OutlinedButton(onClick = {
                             vm.suggestOffset { value ->
-                                suggestion = value?.let { "추천 보정값: ${it}ms" } ?: "추천값 계산에 필요한 근접 표본이 3개 미만입니다."
+                                suggestion = value?.let { "추천 보정값: ${it}ms" }
+                                    ?: "추천값 계산에 필요한 근접 표본이 3개 미만입니다."
                             }
                         }) { Text("자동 추천") }
                     }
@@ -144,21 +204,27 @@ private fun Dashboard(
                 }
             }
         }
+
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = vm::seedDemo) { Text("데모 데이터") }
                 OutlinedButton(onClick = vm::clearAll) { Text("로컬 데이터 초기화") }
             }
         }
+
         item { Text("최근 POS 거래 (${payments.size})", style = MaterialTheme.typography.titleMedium) }
         items(payments.take(10)) { p ->
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp)) {
                     Text("${p.salesDateText} ${p.approvedAtText} · ${p.paymentMethod} · ${p.salesState}")
-                    Text("${NumberFormat.getIntegerInstance().format(p.amountWon)}원", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "${NumberFormat.getIntegerInstance().format(p.amountWon)}원",
+                        style = MaterialTheme.typography.titleMedium
+                    )
                 }
             }
         }
+
         item { Text("최근 DMSS 이벤트 (${events.size})", style = MaterialTheme.typography.titleMedium) }
         items(events.take(10)) { e ->
             Card(Modifier.fillMaxWidth()) {
@@ -168,26 +234,15 @@ private fun Dashboard(
                 }
             }
         }
+
         item { Text("수집 로그", style = MaterialTheme.typography.titleMedium) }
         items(logs.take(12)) { log ->
             Text("${formatTime(log.createdAtMillis)} [${log.source}] ${log.message}")
         }
+
         item {
             Spacer(Modifier.height(24.dp))
-            Text("v0.1은 방문자 신원 또는 절도 여부를 판정하지 않습니다. 수집·시간동기화가 실제 기기에서 검증된 뒤 방문자 추적/이상징후 모듈을 추가합니다.")
-        }
-    }
-}
-
-@Composable
-private fun StatusCard(title: String, granted: Boolean, openSettings: () -> Unit) {
-    Card(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            Column {
-                Text(title, style = MaterialTheme.typography.titleMedium)
-                Text(if (granted) "허용됨" else "설정 필요")
-            }
-            OutlinedButton(onClick = openSettings) { Text(if (granted) "설정" else "허용") }
+            Text("안전 경계: StoreGuard는 얼굴 신원을 식별하지 않고, 결제 사실만으로 정상/절도를 확정하지 않습니다. 이후 이상징후 기능도 '검토 후보'만 생성하도록 유지합니다.")
         }
     }
 }
