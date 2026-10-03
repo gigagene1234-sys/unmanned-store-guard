@@ -241,12 +241,18 @@ class PosCaptureService : Service() {
 
     private fun cleanupProjection() {
         imageReader?.setOnImageAvailableListener(null, null)
-        virtualDisplay?.release()
-        imageReader?.close()
-        projection?.stop()
+
+        val vd = virtualDisplay
+        val reader = imageReader
+        val mp = projection
+
         virtualDisplay = null
         imageReader = null
         projection = null
+
+        vd?.release()
+        reader?.close()
+        mp?.stop()
     }
 
     private fun createChannel() {
