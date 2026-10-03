@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">무인가게 관리 허브</string>
+    <string name="accessibility_service_description">안시포스 화면에서 거래 시각·금액·상태를 읽어 로컬 데이터베이스에 저장합니다. 비밀번호는 수집하지 않습니다.</string>
+</resources>
