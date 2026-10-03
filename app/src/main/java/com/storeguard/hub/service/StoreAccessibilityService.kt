@@ -43,7 +43,7 @@ class StoreAccessibilityService : AccessibilityService() {
                 CollectionLogEntity(
                     source = "ANSI_POS",
                     level = if (parsed.isEmpty()) "DEBUG" else "INFO",
-                    message = "화면 텍스트 ${nodes.size}개 / 거래 ${parsed.size}개 인식 / 신규 $inserted건",
+                    message = "화면 텍스트 ${nodes.size}개 / 거래 ${parsed.size}개 인식 / 신규 ${inserted}건",
                     createdAtMillis = capturedAt
                 )
             )
