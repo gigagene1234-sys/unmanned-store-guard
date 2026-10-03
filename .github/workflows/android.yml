@@ -25,5 +25,5 @@ jobs:
         run: gradle :app:assembleDebug --stacktrace
       - uses: actions/upload-artifact@v4
         with:
-          name: StoreGuardHub-v0.1-debug
+          name: StoreGuardHub-v0.2.1-safe-debug
           path: app/build/outputs/apk/debug/app-debug.apk
