@@ -1,18 +1,19 @@
-# Build status
+# Build status — v0.2.1 Safe
 
-- Source implementation: COMPLETE for v0.1 scope
-- Unit tests: PASS
-- Debug APK build: PASS
-- GitHub Actions run: #25
-- Artifact: StoreGuardHub-v0.1-debug
-- APK SHA-256: `e5df02926ca01df6225b347c397a90f7b7442d42eda4680c6692a6d279dda3d2`
+현재 소스 상태:
+- AccessibilityService 제거: 완료
+- 사용자 승인 MediaProjection 수집: 구현
+- 지속 알림 + 중지 동작: 구현
+- 15분 자동 종료: 구현
+- ML Kit 한국어 OCR: 구현
+- 안시포스 분리 셀/원 단위 없는 금액 파싱 테스트: 추가
+- DMSS 패키지 필터 알림 수집: 유지
 
-## First real-device milestone
+GitHub Actions 최종 빌드/테스트 상태는 최신 커밋의 workflow 결과를 기준으로 확인해야 합니다.
 
-1. Install the debug APK.
-2. Enable StoreGuard notification access for DMSS collection.
-3. Enable StoreGuard accessibility service for ANSI POS screen collection.
-4. Open the ANSI POS sales list and confirm at least one transaction is captured.
-5. Trigger one DMSS notification and confirm one CCTV event is captured.
-
-The current v0.1 build validates the collection/time-alignment foundation. Visitor tracking and anomaly review are intentionally deferred until the real-device collection path is verified.
+첫 실기기 성공 조건:
+1. APK가 일반 사이드로드 설치 절차로 설치됨
+2. POS 수집 시작 시 Android 공식 화면 공유 동의창 표시
+3. 접근성 권한을 요구하지 않음
+4. 안시포스 매출화면에서 실제 거래 1건 이상 자동 추출
+5. 세션 중 원본 캡처 파일이 생성되지 않음
